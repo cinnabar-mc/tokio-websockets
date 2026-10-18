@@ -5,7 +5,7 @@ on: [push, pull_request]
 jobs:
   codespell:
     name: Run codespell
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Run codespell
@@ -13,7 +13,7 @@ jobs:
 
   run-tests:
     name: Run tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Checkout sources
@@ -33,7 +33,7 @@ jobs:
 
   run-fuzzer:
     name: Run fuzzer
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Checkout sources
@@ -57,7 +57,7 @@ jobs:
 
   build-docs:
     name: Build docs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Checkout sources
@@ -79,7 +79,24 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        include:
+          # We want to cover all supported architectures here
+          # FIXME: Add armv7, ppc64
+          - arch: aarch64
+            image: ubuntu-26.04-arm
+          - arch: loongarch64
+            image: [alpine-edge, loongarch64]
+          - arch: ppc64le
+            image: [postmarketos-edge, ppc64le]
+          - arch: s390x
+            image: [ubuntu-25.10, s390x]
+          - arch: x86_64
+            image: ubuntu-26.04
+
+    runs-on: ${{ matrix.image }}
 
     steps:
       - name: Checkout sources
@@ -105,7 +122,7 @@ jobs:
 
   rustfmt:
     name: Format
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Checkout sources
@@ -128,7 +145,7 @@ jobs:
 
   min-vers:
     name: Minimal crate versions
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Checkout sources
@@ -163,7 +180,7 @@ jobs:
 
   features:
     name: Feature powerset (nightly)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Checkout sources
@@ -193,7 +210,7 @@ jobs:
             --feature-powerset \
             --no-dev-deps \
             --exclude-features aws-lc-rs,rustls-tls12 \
-            --group-features client,fastrand,sha1_smol \
+            --group-features client,nightly,sha1_smol \
             --group-features server,sha1_smol
 
   miri:
@@ -205,7 +222,7 @@ jobs:
           # We want to cover all supported architectures here
           # FIXME: Add armv7, ppc64
           - arch: aarch64
-            image: ubuntu-24.04-arm
+            image: ubuntu-26.04-arm
           - arch: loongarch64
             image: [alpine-edge, loongarch64]
           - arch: ppc64le
@@ -213,7 +230,7 @@ jobs:
           - arch: s390x
             image: [ubuntu-25.10, s390x]
           - arch: x86_64
-            image: ubuntu-latest
+            image: ubuntu-26.04
 
     runs-on: ${{ matrix.image }}
 
@@ -234,7 +251,7 @@ jobs:
 
       - name: Run tests in miri
         run: |
-          cargo miri test --all-targets --features client,fastrand,server,sha1_smol
+          cargo miri test --examples --tests --features client,fastrand,server,sha1_smol
 
   msrv:
     name: Feature powerset (MSRV)
@@ -245,7 +262,7 @@ jobs:
           # We want to cover all supported architectures here
           # FIXME: Add armv7, ppc64
           - arch: aarch64
-            image: ubuntu-24.04-arm
+            image: ubuntu-26.04-arm
           - arch: loongarch64
             image: [alpine-edge, loongarch64]
           - arch: ppc64le
@@ -253,7 +270,7 @@ jobs:
           - arch: s390x
             image: [ubuntu-25.10, s390x]
           - arch: x86_64
-            image: ubuntu-latest
+            image: ubuntu-26.04
 
     runs-on: ${{ matrix.image }}
 

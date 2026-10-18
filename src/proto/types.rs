@@ -1,5 +1,5 @@
 //! Types required for the WebSocket protocol implementation.
-use std::{fmt, mem::replace, num::NonZeroU16, ops::Deref};
+use std::{fmt, mem, num::NonZero, ops::Deref};
 
 use bytes::{BufMut, Bytes, BytesMut};
 
@@ -65,7 +65,7 @@ impl From<OpCode> for u8 {
 
 /// Close status code.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CloseCode(NonZeroU16);
+pub struct CloseCode(NonZero<u16>);
 
 // rustfmt reorders these alphabetically
 #[rustfmt::skip]
@@ -118,7 +118,7 @@ impl CloseCode {
     /// Returns `None` if `code` is not a valid `CloseCode`
     const fn try_from_u16(code: u16) -> Option<Self> {
         match code {
-            1000..=1015 | 3000..=4999 => Some(Self(NonZeroU16::new(code).unwrap())),
+            1000..=1015 | 3000..=4999 => Some(Self(NonZero::new(code).unwrap())),
             0..=999 | 1016..=2999 | 5000..=u16::MAX => None,
         }
     }
@@ -176,39 +176,6 @@ pub struct Payload {
     utf8_validated: bool,
 }
 
-impl Payload {
-    /// Creates a new shared `Payload` from a static slice.
-    const fn from_static(bytes: &'static [u8]) -> Self {
-        Self {
-            data: Bytes::from_static(bytes),
-            utf8_validated: false,
-        }
-    }
-
-    /// Marks whether the payload contents were validated to be valid UTF-8.
-    pub(super) fn set_utf8_validated(&mut self, value: bool) {
-        self.utf8_validated = value;
-    }
-
-    /// Shortens the buffer, keeping the first `len` bytes and dropping the
-    /// rest.
-    pub(super) fn truncate(&mut self, len: usize) {
-        self.data.truncate(len);
-    }
-
-    /// Splits the buffer into two at the given index.
-    fn split_to(&mut self, at: usize) -> Self {
-        // This is only used by the outgoing message frame iterator, so we do not care
-        // about the value of utf8_validated. For the sake of correctness (in case we
-        // split a utf8 codepoint), we set it to false.
-        self.utf8_validated = false;
-        Self {
-            data: self.data.split_to(at),
-            utf8_validated: false,
-        }
-    }
-}
-
 impl Deref for Payload {
     type Target = [u8];
 
@@ -222,6 +189,14 @@ impl fmt::Debug for Payload {
         f.debug_tuple("Payload").field(&self.data).finish()
     }
 }
+
+impl PartialEq for Payload {
+    fn eq(&self, other: &Self) -> bool {
+        self.data == other.data
+    }
+}
+
+impl Eq for Payload {}
 
 impl From<Bytes> for Payload {
     fn from(value: Bytes) -> Self {
@@ -307,6 +282,21 @@ pub struct Message {
 }
 
 impl Message {
+    /// Creates a new message.
+    ///
+    /// # Safety
+    ///
+    /// Text messages' data must be valid UTF-8.
+    pub(super) unsafe fn new(opcode: OpCode, data: Bytes) -> Self {
+        Self {
+            opcode,
+            payload: Payload {
+                data,
+                utf8_validated: opcode == OpCode::Text,
+            },
+        }
+    }
+
     /// Create a new text message. The payload contents must be valid UTF-8.
     #[must_use]
     pub fn text<P: Into<Payload>>(payload: P) -> Self {
@@ -475,7 +465,7 @@ impl Message {
     pub(super) fn into_frames(self, frame_size: usize) -> MessageFrames {
         MessageFrames {
             frame_size,
-            payload: self.payload,
+            payload: self.payload.data,
             opcode: self.opcode,
         }
     }
@@ -486,7 +476,7 @@ pub(super) struct MessageFrames {
     /// Iterator over payload chunks.
     frame_size: usize,
     /// The full message payload this iterates over.
-    payload: Payload,
+    payload: Bytes,
     /// Opcode for the next frame.
     opcode: OpCode,
 }
@@ -503,11 +493,33 @@ impl Iterator for MessageFrames {
                 .split_to(self.frame_size.min(self.payload.len()));
 
             Frame {
-                opcode: replace(&mut self.opcode, OpCode::Continuation),
+                opcode: mem::replace(&mut self.opcode, OpCode::Continuation),
                 is_final: self.payload.is_empty(),
                 payload,
             }
         })
+    }
+
+    fn fold<B, F>(mut self, init: B, mut f: F) -> B
+    where
+        F: FnMut(B, Self::Item) -> B,
+    {
+        let mut acc = init;
+        loop {
+            let payload = self
+                .payload
+                .split_to(self.frame_size.min(self.payload.len()));
+            let frame = Frame {
+                opcode: mem::replace(&mut self.opcode, OpCode::Continuation),
+                is_final: self.payload.is_empty(),
+                payload,
+            };
+
+            acc = f(acc, frame);
+            if self.payload.is_empty() {
+                return acc;
+            }
+        }
     }
 }
 
@@ -516,9 +528,10 @@ impl Iterator for MessageFrames {
 ///
 /// [`WebSocketStream`]: super::WebSocketStream
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct Limits {
     /// The maximum allowed payload length. The default is 64 MiB.
-    pub(super) max_payload_len: usize,
+    pub max_payload_len: usize,
 }
 
 impl Limits {
@@ -535,14 +548,9 @@ impl Limits {
     /// The default is 64 MiB.
     #[must_use]
     pub fn max_payload_len(mut self, size: Option<usize>) -> Self {
-        self.set_max_payload_len(size);
+        self.max_payload_len = size.unwrap_or(usize::MAX);
 
         self
-    }
-
-    /// See [`max_payload_len`](Self::max_payload_len).
-    pub fn set_max_payload_len(&mut self, size: Option<usize>) {
-        self.max_payload_len = size.unwrap_or(usize::MAX);
     }
 }
 
@@ -633,21 +641,20 @@ pub(super) enum StreamState {
 /// A frame of a WebSocket [`Message`].
 #[derive(Clone, Debug)]
 pub(super) struct Frame {
-    /// The [`OpCode`] of the frame.
-    pub opcode: OpCode,
     /// Whether this is the last frame of a message.
     pub is_final: bool,
+    /// The [`OpCode`] of the frame.
+    pub opcode: OpCode,
     /// The payload bytes of the frame.
-    pub payload: Payload,
+    pub payload: Bytes,
 }
 
 impl Frame {
     /// Default close frame.
-    #[allow(clippy::declare_interior_mutable_const)]
     pub const DEFAULT_CLOSE: Self = Self {
         opcode: OpCode::Close,
         is_final: true,
-        payload: Payload::from_static(&CloseCode::NORMAL_CLOSURE.0.get().to_be_bytes()),
+        payload: Bytes::from_static(&CloseCode::NORMAL_CLOSURE.0.get().to_be_bytes()),
     };
 
     /// Encode the frame head into `out`, returning a subslice where the mask
@@ -677,7 +684,7 @@ impl From<Message> for Frame {
         Self {
             opcode: value.opcode,
             is_final: true,
-            payload: value.payload,
+            payload: value.payload.data,
         }
     }
 }

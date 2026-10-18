@@ -7,12 +7,14 @@
 //!
 //! [`WebSocketStream`]: super::WebSocketStream
 
+use std::mem;
+
 use bytes::{Buf, BytesMut};
 use tokio_util::codec::Decoder;
 
 use super::types::{Frame, Limits, OpCode, Role};
 use crate::{
-    CloseCode, Error, Payload, mask,
+    CloseCode, Error, mask,
     proto::ProtocolError,
     utf8::{self, Validator},
 };
@@ -54,6 +56,11 @@ impl WebSocketProtocol {
             validator: Validator::new(),
         }
     }
+
+    /// Takes the fragmented message opcode.
+    pub(super) fn take_message_opcode(&mut self) -> OpCode {
+        mem::replace(&mut self.fragmented_message_opcode, OpCode::Continuation)
+    }
 }
 
 /// Macro that gets a range of a buffer. It returns `Ok(None)` and reserves
@@ -74,7 +81,7 @@ impl Decoder for WebSocketProtocol {
     type Error = Error;
     type Item = Frame;
 
-    #[allow(clippy::cast_possible_truncation, clippy::too_many_lines)]
+    #[expect(clippy::cast_possible_truncation, clippy::too_many_lines)]
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         // Opcode and payload length must be present
         let first_two_bytes = get_buf_if_space!(src, 0..2);
@@ -220,15 +227,10 @@ impl Decoder for WebSocketProtocol {
         // Advance the offset into the payload body
         src.advance(offset);
         // Take the payload
-        let mut payload = Payload::from(src.split_to(payload_length));
-        payload.set_utf8_validated(opcode == OpCode::Text && fin);
+        let payload = src.split_to(payload_length).freeze();
 
-        // It is possible to receive intermediate control frames between a large other
-        // frame. We therefore can't simply reset the fragmented opcode after we receive
-        // a "final" frame.
-        if (fin && opcode == OpCode::Continuation) || (!fin && opcode != OpCode::Continuation) {
-            // Full chunked message received (and opcode is Continuation)
-            // or first frame of a multi-frame message received
+        if !fin && opcode != OpCode::Continuation {
+            // First frame of a multi-frame message
             self.fragmented_message_opcode = opcode;
         }
         // In all other cases, we have either a continuation or control frame, neither

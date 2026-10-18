@@ -5,13 +5,13 @@
 use std::{
     collections::VecDeque,
     io::{self, IoSlice},
-    mem::{replace, take},
+    mem::take,
     pin::Pin,
     task::{Context, Poll, Waker, ready},
 };
 
-use bytes::{Buf, BytesMut};
-use futures_core::Stream;
+use bytes::{Buf, Bytes, BytesMut};
+use futures_core::{FusedStream, Stream};
 use futures_sink::Sink;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::{codec::FramedRead, io::poll_write_buf};
@@ -21,7 +21,7 @@ use super::types::Role;
 use super::{
     Config, Limits,
     codec::WebSocketProtocol,
-    types::{Frame, Message, OpCode, Payload, StreamState},
+    types::{Frame, Message, OpCode, StreamState},
 };
 use crate::{CloseCode, Error};
 
@@ -31,7 +31,7 @@ struct EncodedFrame {
     /// Encoded frame header and mask.
     header: [u8; 14],
     /// Potentially masked message payload, ready for writing to the I/O.
-    payload: Payload,
+    payload: Bytes,
 }
 
 impl EncodedFrame {
@@ -178,7 +178,6 @@ impl Buf for FrameQueue {
 ///
 /// [`ClientBuilder`]: crate::ClientBuilder
 /// [`ServerBuilder`]: crate::ServerBuilder
-#[allow(clippy::module_name_repetitions)]
 #[derive(Debug)]
 pub struct WebSocketStream<T> {
     /// The underlying stream using the [`WebSocketProtocol`] to read and write
@@ -193,11 +192,6 @@ pub struct WebSocketStream<T> {
 
     /// Payload of the full message that is being assembled.
     partial_payload: BytesMut,
-    /// Opcode of the full message that is being assembled.
-    partial_opcode: OpCode,
-
-    /// Buffer that outgoing frame headers are formatted into.
-    header_buf: [u8; 14],
 
     /// Queue of outgoing frames to send.
     frame_queue: FrameQueue,
@@ -219,8 +213,6 @@ where
             config,
             state: StreamState::Active,
             partial_payload: BytesMut::new(),
-            partial_opcode: OpCode::Continuation,
-            header_buf: [0; 14],
             frame_queue: FrameQueue::new(),
             flushing_waker: None,
         }
@@ -240,8 +232,6 @@ where
             config,
             state: StreamState::Active,
             partial_payload: BytesMut::new(),
-            partial_opcode: OpCode::Continuation,
-            header_buf: [0; 14],
             frame_queue: FrameQueue::new(),
             flushing_waker: None,
         }
@@ -371,14 +361,15 @@ where
     /// Masks and queues a frame for sending when [`poll_flush`] gets called.
     fn queue_frame(
         &mut self,
-        #[cfg_attr(not(feature = "client"), allow(unused_mut))] mut frame: Frame,
+        #[cfg_attr(not(feature = "client"), expect(unused_mut))] mut frame: Frame,
     ) {
         if frame.opcode == OpCode::Close && self.state != StreamState::ClosedByPeer {
             self.state = StreamState::ClosedByUs;
         }
 
-        #[cfg_attr(not(feature = "client"), allow(unused_variables))]
-        let mask = frame.encode(&mut self.header_buf);
+        let mut header = [0; 14];
+        #[cfg_attr(not(feature = "client"), expect(unused_variables))]
+        let mask = frame.encode(&mut header);
 
         #[cfg(feature = "client")]
         {
@@ -391,13 +382,13 @@ where
                 // &mut *mask won't work, the compiler will optimize the deref/copy away
                 let mut mask_copy = *mask;
                 crate::mask::frame(&mut mask_copy, &mut payload);
-                frame.payload = Payload::from(payload);
-                self.header_buf[1] |= 1 << 7;
+                frame.payload = payload.freeze();
+                header[1] |= 1 << 7;
             }
         }
 
         let item = EncodedFrame {
-            header: self.header_buf,
+            header,
             payload: frame.payload,
         };
         self.frame_queue.push(item);
@@ -434,9 +425,9 @@ where
 
             if opcode != OpCode::Continuation {
                 if fin {
-                    return Poll::Ready(Some(Ok(Message { opcode, payload })));
+                    // SAFETY: Codec validates text frames as UTF-8.
+                    return Poll::Ready(Some(Ok(unsafe { Message::new(opcode, payload) })));
                 }
-                self.partial_opcode = opcode;
                 self.partial_payload = BytesMut::from(payload);
             } else if len > max_len {
                 return Poll::Ready(Some(Err(Error::PayloadTooLong { len, max_len })));
@@ -449,11 +440,25 @@ where
             }
         }
 
-        let opcode = replace(&mut self.partial_opcode, OpCode::Continuation);
-        let mut payload = Payload::from(take(&mut self.partial_payload));
-        payload.set_utf8_validated(opcode == OpCode::Text);
+        let opcode = self.inner.decoder_mut().take_message_opcode();
+        // SAFETY: Codec validates text frames as UTF-8.
+        let message = unsafe { Message::new(opcode, take(&mut self.partial_payload).freeze()) };
 
-        Poll::Ready(Some(Ok(Message { opcode, payload })))
+        Poll::Ready(Some(Ok(message)))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let is_exhausted = self.is_terminated() || self.state == StreamState::ClosedByPeer;
+        (0, is_exhausted.then_some(0))
+    }
+}
+
+impl<T> FusedStream for WebSocketStream<T>
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    fn is_terminated(&self) -> bool {
+        self.state == StreamState::CloseAcknowledged
     }
 }
 
@@ -468,11 +473,11 @@ where
 {
     type Error = Error;
 
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         // tokio-util calls poll_flush when more than 8096 bytes are pending, otherwise
         // it returns Ready. We will just replicate that behavior
         if self.frame_queue.remaining() >= self.config.flush_threshold {
-            self.as_mut().poll_flush(cx)
+            self.poll_flush(cx)
         } else {
             Poll::Ready(Ok(()))
         }
@@ -488,9 +493,8 @@ where
             self.queue_frame(frame);
         } else {
             // Chunk the message into frames
-            for frame in item.into_frames(self.config.frame_size) {
-                self.queue_frame(frame);
-            }
+            item.into_frames(self.config.frame_size)
+                .for_each(|frame| self.queue_frame(frame));
         }
 
         Ok(())
