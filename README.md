@@ -7,6 +7,12 @@
 
 High performance, strict, tokio-util based WebSockets implementation.
 
+This is Cinnabar's maintained fork of
+[Gelbpunkt/tokio-websockets](https://github.com/Gelbpunkt/tokio-websockets).
+Incomplete frame buffers grow as payload bytes arrive instead of reserving the
+entire advertised payload after its header. Completed messages still retain
+their payload, and the configured message-size limit still applies.
+
 ## Why use tokio-websockets?
 
 - Built with tokio-util, intended to be used with tokio from the ground up
@@ -127,7 +133,7 @@ async fn main() -> Result<(), Error> {
 
 Basic client using `rustls` with `aws_lc_rs` as the crypto provider:
 
-```rust
+```no_run
 use futures_util::{SinkExt, StreamExt};
 use http::Uri;
 use tokio_websockets::{ClientBuilder, Error, Message};
