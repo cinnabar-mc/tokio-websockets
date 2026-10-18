@@ -17,6 +17,9 @@ use crate::{
     utf8::{self, Validator},
 };
 
+#[cfg(all(test, any(feature = "client", feature = "server")))]
+mod tests;
+
 /// Maximum size of a frame header (2 + 8 + 4).
 const MAX_FRAME_HEADER_SIZE: usize = 14;
 
