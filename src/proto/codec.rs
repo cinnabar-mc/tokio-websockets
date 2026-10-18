@@ -196,8 +196,6 @@ impl Decoder for WebSocketProtocol {
             }
 
             if !is_complete {
-                src.reserve(payload_length - payload_available);
-
                 return Ok(None);
             }
 

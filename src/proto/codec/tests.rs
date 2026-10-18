@@ -107,3 +107,65 @@ fn oversized_frame_declaration_is_rejected_before_payload_reservation() {
         assert!(framed.read_buffer().capacity() <= initial_capacity.checked_mul(2).unwrap());
     }
 }
+
+/// Full permitted frames survive segmented reads in both roles without losing
+/// the next frame.
+#[cfg(all(feature = "client", feature = "server"))]
+#[tokio::test]
+async fn full_size_segmented_messages_preserve_payload_and_boundaries() {
+    use bytes::Bytes;
+    use futures_util::{SinkExt, StreamExt};
+
+    use crate::{ClientBuilder, Config, Message, ServerBuilder};
+
+    let expected = Bytes::from(
+        (0..PERMITTED_PAYLOAD_BYTES)
+            .map(|index| u8::try_from(index % 251).unwrap())
+            .collect::<Vec<_>>(),
+    );
+    let following = Bytes::from_static(b"next-frame");
+    let (client_io, server_io) = tokio::io::duplex(8191);
+    let config = Config::default().frame_size(PERMITTED_PAYLOAD_BYTES);
+    let limits = Limits::default().max_payload_len(Some(PERMITTED_PAYLOAD_BYTES));
+    let mut client = ClientBuilder::new()
+        .config(config)
+        .limits(limits)
+        .take_over(client_io);
+    let mut server = ServerBuilder::new()
+        .config(config)
+        .limits(limits)
+        .serve(server_io);
+
+    let client_exchange = async {
+        client
+            .send(Message::binary(expected.clone()))
+            .await
+            .unwrap();
+        client
+            .send(Message::binary(following.clone()))
+            .await
+            .unwrap();
+        let message = client.next().await.unwrap().unwrap();
+        assert!(message.is_binary());
+        let payload = message.into_payload();
+        assert_eq!(payload.len(), PERMITTED_PAYLOAD_BYTES);
+        assert!(&*payload == expected.as_ref());
+        let next = client.next().await.unwrap().unwrap();
+        assert!(next.is_binary());
+        assert!(&*next.into_payload() == following.as_ref());
+    };
+    let server_exchange = async {
+        let message = server.next().await.unwrap().unwrap();
+        assert!(message.is_binary());
+        let payload = message.into_payload();
+        assert_eq!(payload.len(), PERMITTED_PAYLOAD_BYTES);
+        assert!(&*payload == expected.as_ref());
+        server.send(Message::binary(payload)).await.unwrap();
+        let next = server.next().await.unwrap().unwrap();
+        assert!(next.is_binary());
+        let payload = next.into_payload();
+        assert!(&*payload == following.as_ref());
+        server.send(Message::binary(payload)).await.unwrap();
+    };
+    tokio::join!(client_exchange, server_exchange);
+}
