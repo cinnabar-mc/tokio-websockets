@@ -133,7 +133,7 @@ async fn main() -> Result<(), Error> {
 
 Basic client using `rustls` with `aws_lc_rs` as the crypto provider:
 
-```rust
+```no_run
 use futures_util::{SinkExt, StreamExt};
 use http::Uri;
 use tokio_websockets::{ClientBuilder, Error, Message};
