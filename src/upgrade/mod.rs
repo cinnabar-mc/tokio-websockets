@@ -24,6 +24,7 @@ pub(crate) const DEFAULT_RESPONSE_SIZE: NonZeroUsize =
 /// values.
 #[cfg(feature = "client")]
 pub struct RejectedResponse {
+    /// Original parsed metadata; never includes the response body.
     pub(crate) response: Response,
 }
 

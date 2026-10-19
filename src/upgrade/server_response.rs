@@ -31,7 +31,9 @@ fn header<'a, 'header: 'a>(
 pub struct Codec {
     /// The SHA-1 digest of the `Sec-WebSocket-Key` header.
     ws_accept: [u8; 20],
+    /// Maximum bytes in the HTTP status line and headers.
     max_response_size: NonZeroUsize,
+    /// Whether rejected status responses retain their original header metadata.
     capture_rejected_response: bool,
 }
 
