@@ -149,22 +149,22 @@ async fn full_size_segmented_messages_preserve_payload_and_boundaries() {
         assert!(message.is_binary());
         let payload = message.into_payload();
         assert_eq!(payload.len(), PERMITTED_PAYLOAD_BYTES);
-        assert!(&*payload == expected.as_ref());
+        assert_eq!(&*payload, &*expected);
         let next = client.next().await.unwrap().unwrap();
         assert!(next.is_binary());
-        assert!(&*next.into_payload() == following.as_ref());
+        assert_eq!(&*next.into_payload(), &*following);
     };
     let server_exchange = async {
         let message = server.next().await.unwrap().unwrap();
         assert!(message.is_binary());
         let payload = message.into_payload();
         assert_eq!(payload.len(), PERMITTED_PAYLOAD_BYTES);
-        assert!(&*payload == expected.as_ref());
+        assert_eq!(&*payload, &*expected);
         server.send(Message::binary(payload)).await.unwrap();
         let next = server.next().await.unwrap().unwrap();
         assert!(next.is_binary());
         let payload = next.into_payload();
-        assert!(&*payload == following.as_ref());
+        assert_eq!(&*payload, &*following);
         server.send(Message::binary(payload)).await.unwrap();
     };
     tokio::join!(client_exchange, server_exchange);
