@@ -1,4 +1,3 @@
-#![feature(random)]
 // Required for NEON on 32-bit ARM until stable
 #![cfg_attr(
     all(feature = "nightly", target_arch = "arm"),
@@ -30,10 +29,7 @@
     all(feature = "nightly", target_arch = "loongarch64"),
     feature(stdarch_loongarch)
 )]
-use std::{
-    hint::black_box,
-    random::{DefaultRandomSource, RandomSource},
-};
+use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 #[path = "../src/mask.rs"]
@@ -50,10 +46,10 @@ use mask::frame;
 fn mask_benchmark(c: &mut Criterion) {
     // Generate 1 GiB of random data
     let mut data = vec![0; 1024 * 1024 * 1024];
-    DefaultRandomSource.fill_bytes(&mut data);
+    fastrand::fill(&mut data);
     // Generate a random masking key
     let mut key = [0; 4];
-    DefaultRandomSource.fill_bytes(&mut key);
+    fastrand::fill(&mut key);
 
     // We benchmark 2^n bytes of input for n in 0..=30 (2 ** 30 bytes are 1GiB)
     for exp in 0..=30 {

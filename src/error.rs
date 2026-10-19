@@ -68,6 +68,21 @@ pub enum Error {
     NoNativeRootCertificatesFound(Vec<rustls_native_certs::Error>),
 }
 
+#[cfg(feature = "client")]
+impl Error {
+    /// Borrows a rejected HTTP upgrade's original status and headers when the
+    /// client enabled [`crate::ClientBuilder::capture_rejected_response`].
+    #[must_use]
+    pub fn upgrade_response(&self) -> Option<&crate::upgrade::Response> {
+        match self {
+            Self::Upgrade(crate::upgrade::Error::RejectedResponse(response)) => {
+                Some(response.response())
+            }
+            _ => None,
+        }
+    }
+}
+
 #[cfg(feature = "native-tls")]
 impl From<native_tls::Error> for Error {
     fn from(err: native_tls::Error) -> Self {

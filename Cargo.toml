@@ -79,7 +79,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(benchmark)"] }
 [[bench]]
 name = "bench_mask"
 harness = false
-required-features = ["nightly"]
+required-features = ["fastrand"]
 
 [[example]]
 name = "autobahn_client"
