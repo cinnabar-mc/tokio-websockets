@@ -7,7 +7,7 @@
 //!     established stream, via [`Builder::connect_on`]
 //!   - By performing the handshake yourself and then using
 //!     [`Builder::take_over`] to let it take over a WebSocket stream
-use std::{future::poll_fn, io, pin::Pin, str::FromStr};
+use std::{future::poll_fn, io, num::NonZeroUsize, pin::Pin, str::FromStr};
 
 use base64::{Engine, engine::general_purpose};
 use futures_core::Stream;
@@ -134,6 +134,10 @@ pub struct Builder<'a, R: Resolver = resolver::Gai> {
     limits: Limits,
     /// Headers to be sent with the upgrade request.
     headers: HeaderMap,
+    /// Maximum bytes in the response status line and headers.
+    max_upgrade_response_size: NonZeroUsize,
+    /// Retain rejected HTTP metadata in the returned error.
+    capture_rejected_response: bool,
 }
 
 impl Builder<'_> {
@@ -148,6 +152,8 @@ impl Builder<'_> {
             config: Config::default(),
             limits: Limits::default(),
             headers: HeaderMap::new(),
+            max_upgrade_response_size: upgrade::DEFAULT_RESPONSE_SIZE,
+            capture_rejected_response: false,
         }
     }
 
@@ -164,6 +170,8 @@ impl Builder<'_> {
             config: Config::default(),
             limits: Limits::default(),
             headers: HeaderMap::new(),
+            max_upgrade_response_size: upgrade::DEFAULT_RESPONSE_SIZE,
+            capture_rejected_response: false,
         }
     }
 }
@@ -208,6 +216,8 @@ impl<'a, R: Resolver> Builder<'a, R> {
             config,
             limits,
             headers,
+            max_upgrade_response_size,
+            capture_rejected_response,
         } = self;
 
         Builder {
@@ -217,6 +227,8 @@ impl<'a, R: Resolver> Builder<'a, R> {
             config,
             limits,
             headers,
+            max_upgrade_response_size,
+            capture_rejected_response,
         }
     }
 
@@ -225,6 +237,26 @@ impl<'a, R: Resolver> Builder<'a, R> {
     pub fn config(mut self, config: Config) -> Self {
         self.config = config;
 
+        self
+    }
+
+    /// Limits the HTTP response status line and headers to this many bytes.
+    /// The default is 64 KiB. Coalesced WebSocket frames do not count toward
+    /// this limit. This bounds parsed headers, not the stream driver's
+    /// exact allocation capacity.
+    #[must_use]
+    pub fn max_upgrade_response_size(mut self, bytes: NonZeroUsize) -> Self {
+        self.max_upgrade_response_size = bytes;
+        self
+    }
+
+    /// Retains non-101 response metadata in [`Error::upgrade_response`].
+    /// Disabled by default, preserving
+    /// [`upgrade::Error::DidNotSwitchProtocols`]. Response bodies are not
+    /// read; Debug output omits the retained headers.
+    #[must_use]
+    pub fn capture_rejected_response(mut self, capture: bool) -> Self {
+        self.capture_rejected_response = capture;
         self
     }
 
@@ -318,7 +350,9 @@ impl<'a, R: Resolver> Builder<'a, R> {
 
         let key_base64 = make_key();
 
-        let upgrade_codec = server_response::Codec::new(&key_base64);
+        let upgrade_codec = server_response::Codec::new(&key_base64)
+            .max_response_size(self.max_upgrade_response_size)
+            .capture_rejected_response(self.capture_rejected_response);
         let request = build_request(uri, &key_base64, &self.headers);
         stream.write_all(&request).await?;
         stream.flush().await?;
