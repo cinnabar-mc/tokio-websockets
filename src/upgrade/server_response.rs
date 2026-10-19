@@ -104,3 +104,20 @@ impl Decoder for Codec {
         Ok(Some(parsed_response))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An unfinished response cannot retain an arbitrarily growing header value.
+    #[test]
+    fn incomplete_upgrade_headers_are_bounded() {
+        let mut input = BytesMut::from(&b"HTTP/1.1 101 Switching Protocols\r\nX-Padding: "[..]);
+        input.resize(128 * 1024, b'a');
+        let mut codec = Codec::new(b"original-upgrade-key");
+        assert!(
+            codec.decode(&mut input).is_err(),
+            "oversized incomplete upgrade headers remained pending"
+        );
+    }
+}
