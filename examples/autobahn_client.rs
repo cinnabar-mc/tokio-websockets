@@ -1,4 +1,4 @@
-use std::{io, str::FromStr, time::Duration};
+use std::{io, num::NonZeroU32, str::FromStr, time::Duration};
 
 use futures_util::{SinkExt, StreamExt};
 use http::Uri;
@@ -7,7 +7,7 @@ use tokio_websockets::{ClientBuilder, Connector, Error, Limits};
 
 const SERVER: &str = "ws://127.0.0.1:9001";
 
-async fn get_case_count() -> Result<u32, Error> {
+async fn get_case_count() -> Result<NonZeroU32, Error> {
     let uri = Uri::from_str(&format!("{SERVER}/getCaseCount")).unwrap();
     let (mut stream, _) = ClientBuilder::from_uri(uri)
         .connector(&Connector::Plain)
@@ -26,7 +26,7 @@ async fn get_case_count() -> Result<u32, Error> {
         )
     })?;
     count
-        .parse::<u32>()
+        .parse::<NonZeroU32>()
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error).into())
 }
 
@@ -85,7 +85,7 @@ async fn main() -> Result<(), Error> {
     };
     println!("Running {total} tests");
 
-    for case in 1..=total {
+    for case in 1..=total.get() {
         if let Err(e) = run_test(case).await {
             match e {
                 Error::Protocol(_) => {}
