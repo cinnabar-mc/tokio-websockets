@@ -27,11 +27,9 @@ trap 'exit 143' TERM
 container=$(podman run -d \
     -v "${PWD}/autobahn/config:/config" \
     -v "${PWD}/autobahn/reports:/reports" \
-    -p 9001:9001 \
+    -p 127.0.0.1:9001:9001 \
     --security-opt label=disable \
     --name autobahn \
     crossbario/autobahn-testsuite)
-
-python3 scripts/wait_for_autobahn.py
 
 target/release/examples/autobahn_client
