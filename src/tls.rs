@@ -75,7 +75,19 @@ impl Debug for Connector {
 }
 
 /// A stream that might be protected with TLS.
-#[expect(clippy::large_enum_variant)] // Only one or two of these will be used
+#[cfg_attr(
+    any(
+        feature = "native-tls",
+        feature = "rustls-native-roots",
+        feature = "rustls-webpki-roots",
+        feature = "rustls-platform-verifier",
+        feature = "rustls-bring-your-own-connector"
+    ),
+    allow(
+        clippy::large_enum_variant,
+        reason = "TLS backend variant sizes depend on the selected features and platform"
+    )
+)]
 #[derive(Debug)]
 pub enum MaybeTlsStream<S> {
     /// Unencrypted socket stream.
