@@ -209,7 +209,7 @@ jobs:
           cargo hack check \
             --feature-powerset \
             --no-dev-deps \
-            --exclude-features aws-lc-rs,rustls-tls12 \
+            --exclude-features aws_lc_rs,rustls-tls12 \
             --group-features client,nightly,sha1_smol \
             --group-features server,sha1_smol
 
