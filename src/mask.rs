@@ -401,9 +401,9 @@ pub fn frame(key: &mut [u8; 4], input: &mut [u8]) {
 
     #[cfg(all(feature = "nightly", target_arch = "powerpc64"))]
     {
-        use std::arch::is_powerpc64_feature_detected;
+        use std::arch::is_powerpc_feature_detected;
 
-        if is_powerpc64_feature_detected!("altivec") {
+        if is_powerpc_feature_detected!("altivec") {
             return unsafe { frame_altivec(key, input) };
         }
     }
