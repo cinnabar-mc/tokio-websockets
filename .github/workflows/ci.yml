@@ -1,6 +1,9 @@
 name: Check build
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
 
 jobs:
   codespell:
@@ -81,18 +84,10 @@ jobs:
     name: Clippy
 
     strategy:
-      matrix:
+      matrix: &hosted-platforms
         include:
-          # We want to cover all supported architectures here
-          # FIXME: Add armv7, ppc64
           - arch: aarch64
             image: ubuntu-26.04-arm
-          - arch: loongarch64
-            image: [alpine-edge, loongarch64]
-          - arch: ppc64le
-            image: [postmarketos-edge, ppc64le]
-          - arch: s390x
-            image: [ubuntu-25.10, s390x]
           - arch: x86_64
             image: ubuntu-26.04
 
@@ -119,6 +114,35 @@ jobs:
 
       - name: Run clippy (fuzz)
         run: cargo clippy --manifest-path fuzz/Cargo.toml --all-targets
+
+  cross-compile:
+    name: Cross-compile (${{ matrix.target }})
+    runs-on: ubuntu-26.04
+
+    strategy:
+      matrix:
+        target:
+          - loongarch64-unknown-linux-gnu
+          - powerpc64le-unknown-linux-gnu
+          - s390x-unknown-linux-gnu
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - name: Install nightly toolchain and target
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          targets: ${{ matrix.target }}
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Check pure Rust library for target
+        run: cargo check --lib --target "${{ matrix.target }}" --no-default-features --features client,fastrand,nightly,server,sha1_smol
 
   rustfmt:
     name: Format
@@ -209,7 +233,7 @@ jobs:
           cargo hack check \
             --feature-powerset \
             --no-dev-deps \
-            --exclude-features aws-lc-rs,rustls-tls12 \
+            --exclude-features aws_lc_rs,rustls-tls12 \
             --group-features client,nightly,sha1_smol \
             --group-features server,sha1_smol
 
@@ -217,20 +241,7 @@ jobs:
     name: Run tests in miri
 
     strategy:
-      matrix:
-        include:
-          # We want to cover all supported architectures here
-          # FIXME: Add armv7, ppc64
-          - arch: aarch64
-            image: ubuntu-26.04-arm
-          - arch: loongarch64
-            image: [alpine-edge, loongarch64]
-          - arch: ppc64le
-            image: [postmarketos-edge, ppc64le]
-          - arch: s390x
-            image: [ubuntu-25.10, s390x]
-          - arch: x86_64
-            image: ubuntu-26.04
+      matrix: *hosted-platforms
 
     runs-on: ${{ matrix.image }}
 
@@ -257,20 +268,7 @@ jobs:
     name: Feature powerset (MSRV)
 
     strategy:
-      matrix:
-        include:
-          # We want to cover all supported architectures here
-          # FIXME: Add armv7, ppc64
-          - arch: aarch64
-            image: ubuntu-26.04-arm
-          - arch: loongarch64
-            image: [alpine-edge, loongarch64]
-          - arch: ppc64le
-            image: [postmarketos-edge, ppc64le]
-          - arch: s390x
-            image: [ubuntu-25.10, s390x]
-          - arch: x86_64
-            image: ubuntu-26.04
+      matrix: *hosted-platforms
 
     runs-on: ${{ matrix.image }}
 
